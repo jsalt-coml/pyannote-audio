@@ -25,7 +25,7 @@
 
 # AUTHORS
 # Hervé BREDIN - http://herve.niderb.fr
-
+import ipdb
 import numpy as np
 import scipy.signal
 import torch
@@ -44,6 +44,8 @@ from pyannote.generators.fragment import SlidingSegments
 from pyannote.generators.fragment import random_segment
 from pyannote.generators.fragment import random_subsegment
 
+from .balanced_sampler import AnnotatedFile, Domain, Domain_set
+from .batch_metrics import Batch_Metrics
 from .. import TASK_MULTI_CLASS_CLASSIFICATION
 from .. import TASK_MULTI_LABEL_CLASSIFICATION
 from .. import TASK_REGRESSION
@@ -107,13 +109,14 @@ class LabelingTaskGenerator:
                  duration=3.2, step=None,
                  batch_size=32, per_epoch=1, parallel=1,
                  exhaustive=False, shuffle=False,
-                 mask_dimension=None, mask_logscale=False):
+                 mask_dimension=None, mask_logscale=False,
+                 label_mapping=None, balanced=False, batch_log=None):
 
         self.feature_extraction = feature_extraction
-
         if frame_info is None:
             frame_info = self.feature_extraction.sliding_window
         self.frame_info = frame_info
+        
 
         if frame_crop is None:
             frame_crop = 'center'
@@ -134,6 +137,18 @@ class LabelingTaskGenerator:
 
         self._load_metadata(protocol, subset=subset)
 
+        # balanced sampling
+        self.subset = subset
+        self.protocol = protocol
+        self.label_mapping = label_mapping
+        self.balanced = balanced
+        all_labels = self.labels_spec['regular'] # gat all "regular" labels
+        #self.batch_metrics = batch_metrics
+        #self.batch_metrics = None
+        self.batch_log = batch_log
+        self.batch_metrics = Batch_Metrics(self.protocol, self.subset, all_labels, self.batch_size, self.batch_log)
+
+        
     def postprocess_y(self, Y):
         """This function does nothing but return its input.
         It should be overriden by subclasses."""
@@ -286,8 +301,75 @@ class LabelingTaskGenerator:
     def _samples(self):
         if self.exhaustive:
             return self._sliding_samples()
+        elif self.balanced:
+            return self._balanced_samples()
         else:
             return self._random_samples()
+
+    def _balanced_samples(self):
+        """Balanced samples
+
+        Returns
+        -------
+        samples : generator
+            Generator that yields {'X': ..., 'y': ...} samples indefinitely.
+        """
+
+        uris = list(self.data_)
+        # things to get from config.yml
+        min_freq = True
+        all_labels = self.labels_spec['regular'] # gat all "regular" labels
+
+        # create domain set
+        domain_set = Domain_set(self.label_mapping, self.protocol,
+                                all_labels, self.subset)
+
+        # Check that subbatch size is an integer. If not, 
+        # Take the closest integer and batch size will be reduced by force.
+        subbatch_size = int(self.batch_size / len(all_labels))
+        if not self.batch_size % len(all_labels) == 0:
+            print('warning: batch size {} is not a multiple of the '
+                  'number of labels {}, required by balanced sampler.'
+                  'The batch size will be reduced to {}.'.format(self.batch_size,
+                                                                 len(all_labels),
+                                                                 subbatch_size * len(all_labels)))
+        #self.batch_metrics = Batch_Metrics(self.protocol, self.subset, all_labels, self.batch_size, self.batch_log)
+
+        while True:
+
+            for label in all_labels:
+                _pos_neg = True
+                for k in range(subbatch_size):
+                    # Sample alternatively a positive and a negative example
+                    _pos_neg = not _pos_neg
+
+                    # first sample domain then example
+                    sampled_domain, _ = domain_set.sample_domain(label)
+                    sample_onset, sample_offset, uri = sampled_domain.sample_segment(label, _pos_neg)
+
+                    # log metrics on batch
+
+                    #ipdb.set_trace()
+                    datum = self.data_[uri]
+                    current_file = datum['current_file']
+                    ## TODO fix sample rate in sampling
+                    subsegment = Segment(sample_onset, sample_offset)
+                    X = self.feature_extraction.crop(current_file,
+                                             subsegment, mode="center",
+                                             fixed=self.duration)
+                    cov = self.batch_metrics.compute_coverage(sample_onset, sample_offset, uri)
+                    bal = self.batch_metrics.compute_balance(label, sample_onset, sample_offset, uri)
+                    y = self.crop_y(datum['y'], subsegment)
+                    sample = {'X': X, 'y': y}
+                    for key, classes in self.file_labels_.items():
+                        sample[key] = classes.index(current_file[key])
+                    #print('using balanced_sampler')
+
+                    yield sample
+
+            if self.batch_log:
+                self.batch_metrics.dump_stats(self.batch_log)
+
 
     def _random_samples(self):
         """Random samples
@@ -300,9 +382,10 @@ class LabelingTaskGenerator:
         uris = list(self.data_)
         durations = np.array([self.data_[uri]['duration'] for uri in uris])
         probabilities = durations / np.sum(durations)
-
+        all_labels = self.labels_spec['regular'] # gat all "regular" labels
+        i = 0
         while True:
-
+            i+=1
             # choose file at random with probability
             # proportional to its (annotated) duration
             uri = uris[np.random.choice(len(uris), p=probabilities)]
@@ -345,8 +428,19 @@ class LabelingTaskGenerator:
 
             for key, classes in self.file_labels_.items():
                 sample[key] = classes.index(current_file[key])
+            #print('using random_sampler')
+            sample_onset = int(subsegment.start) 
+            sample_offset = int((subsegment.start + self.duration)) 
+
+            cov = self.batch_metrics.compute_coverage(sample_onset, sample_offset, uri)
+            bal = self.batch_metrics.compute_balance(None, sample_onset, sample_offset, uri)
 
             yield sample
+            #batch_log = '/scratch2/jkaradayi/projects/JSALT2019/BabyTrain_multilabel/2708_pyannote_for_samplingBranch/random_sampling/batch.log'
+            #
+            if (self.batch_log and i%self.batch_size == 0):
+                self.batch_metrics.dump_stats(self.batch_log, with_balance=False)
+
 
     def _sliding_samples(self):
 
@@ -415,7 +509,7 @@ class LabelingTaskGenerator:
 
                     for key, classes in self.file_labels_.items():
                         sample[key] = classes.index(current_file[key])
-
+                    #print('using sliding sampler')
                     if self.shuffle:
                         samples.append(sample)
                     else:

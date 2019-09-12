@@ -40,6 +40,7 @@ from pyannote.database import FileFinder
 from pyannote.database import get_protocol
 from pyannote.audio.util import mkdir_p
 from pyannote.audio.features.utils import get_audio_duration
+#from pyannote.audio.labeling.tasks import Batch_Metrics
 from sortedcontainers import SortedDict
 import tensorboardX
 from functools import partial
@@ -179,6 +180,12 @@ class Application:
                 **self.config_['feature_extraction'].get('params', {}),
                 augmentation=augmentation)
 
+        # balanced sampling for batches
+        self.label_mapping = self.config_['preprocessors']['annotation']['params']['mapping']
+        self.balanced = self.config_['task']['params']['balanced']
+        self.batch_log = self.config_['task']['params']['batch_log']
+        self.batch_size = self.config_['task']['params']['batch_size']
+        self.all_labels = self.config_['task']['params']['labels_spec']['regular']
 
     def train(self, protocol_name, subset='train', restart=0, epochs=1000):
         """Trainer model
@@ -221,9 +228,17 @@ class Application:
         # initialize batch generator
         protocol = get_protocol(protocol_name, progress=True,
                                 preprocessors=self.preprocessors_)
+        # initiate batch metrics
+        ## TODO GET ALL_LABELS
+        #self.batch_metrics = Batch_Metrics(protocol, subset, self.all_labels,
+        #                              self.batch_size, self.batch_log)
+
         batch_generator = self.task_.get_batch_generator(
             self.feature_extraction_, protocol, subset=subset,
-            frame_info=self.frame_info_, frame_crop=self.frame_crop_)
+            frame_info=self.frame_info_, frame_crop=self.frame_crop_,
+            label_mapping=self.label_mapping,
+            balanced= self.balanced,
+            batch_log=self.batch_log)
 
         self.task_.fit(
             self.get_model_, batch_generator,

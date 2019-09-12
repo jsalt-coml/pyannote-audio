@@ -116,14 +116,18 @@ class MultilabelGenerator(LabelingTaskGenerator):
     def __init__(self, feature_extraction, protocol, labels_spec,
                  subset='train', frame_info=None, frame_crop=None,
                  duration=3.2, batch_size=32, per_epoch=1, parallel=1,
-                 shuffle=True):
+                 shuffle=True,label_mapping=None,
+                 balanced=False, batch_log=None):
 
         self.labels_spec = labels_spec
         super().__init__(feature_extraction, protocol, subset=subset,
                          frame_info=frame_info, frame_crop=frame_crop,
                          duration=duration,
                          batch_size=batch_size, per_epoch=per_epoch,
-                         parallel=parallel, shuffle=shuffle)
+                         parallel=parallel, shuffle=shuffle,
+                         label_mapping=label_mapping,
+                         balanced=balanced,
+                         batch_log=batch_log)
 
     def initialize_y(self, current_file):
         # First, one hot encode the regular classes
@@ -245,7 +249,7 @@ class Multilabel(LabelingTask):
     >>> for epoch, model in task.fit_iter(model, task.get_batch_generator(precomputed, protocol)):
     ...     pass
     """
-    def __init__(self, labels_spec, weighted_loss=False, **kwargs):
+    def __init__(self, labels_spec, balanced=True, batch_log=None,  weighted_loss=False, **kwargs):
         super(Multilabel, self).__init__(**kwargs)
 
         # Labels related attributes
@@ -340,7 +344,8 @@ class Multilabel(LabelingTask):
                              "Can't be %s." % derivation_type)
 
     def get_batch_generator(self, feature_extraction, protocol, subset='train',
-                            frame_info=None, frame_crop=None):
+                            frame_info=None, frame_crop=None, label_mapping=None,
+                            balanced=False, batch_log=None):
         return MultilabelGenerator(
             feature_extraction,
             protocol, subset=subset,
@@ -350,7 +355,10 @@ class Multilabel(LabelingTask):
             per_epoch=self.per_epoch,
             batch_size=self.batch_size,
             parallel=self.parallel,
-            labels_spec=self.labels_spec)
+            labels_spec=self.labels_spec,
+            label_mapping=label_mapping,
+            balanced=balanced,
+            batch_log=batch_log)
 
     @property
     def weight(self):
