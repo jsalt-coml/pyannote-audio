@@ -144,7 +144,7 @@ class Domain_set:
         #ipdb.set_trace()
            
         self.data_ = {fin['uri']: fin for fin in file_set}
-
+        ipdb.set_trace()
         # get label frequencies per domain
         self.domain_set = [] 
         self.domain_labelFreqs = np.zeros((len(all_labels), len(self.domain_names)))
@@ -157,10 +157,10 @@ class Domain_set:
             # compute frequencies for each label
             for j, label in enumerate(all_labels):
                 if self.min_freq:
-                    self.domain_labelFreqs[j, i] = min(domain.positive_freqs[i],
-                                                       domain.negative_freqs[i])
+                    self.domain_labelFreqs[j, i] = min(domain.positive_freqs[j],
+                                                       domain.negative_freqs[j])
                 else:
-                    self.domain_labelFreqs[j, i] = domain.prositive_freqs[i]
+                    self.domain_labelFreqs[j, i] = domain.prositive_freqs[j]
 
  
         # get frequencies to sum to 1 across domains for each label
