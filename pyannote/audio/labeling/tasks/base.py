@@ -142,7 +142,7 @@ class LabelingTaskGenerator:
         self.protocol = protocol
         self.label_mapping = label_mapping
         self.balanced = balanced
-        all_labels = self.labels_spec['regular'] # gat all "regular" labels
+        all_labels = self.labels_spec['union']['SPEECH'] # gat all "regular" labels
         #self.batch_metrics = batch_metrics
         #self.batch_metrics = None
         self.batch_log = batch_log
@@ -318,7 +318,8 @@ class LabelingTaskGenerator:
         uris = list(self.data_)
         # things to get from config.yml
         min_freq = True
-        all_labels = self.labels_spec['regular'] # gat all "regular" labels
+        #all_labels = self.labels_spec['regular'] # gat all "regular" labels
+        all_labels = self.labels_spec['union']['SPEECH'] # gat all "regular" labels
 
         # create domain set
         domain_set = Domain_set(self.label_mapping, self.protocol,
