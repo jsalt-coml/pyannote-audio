@@ -136,17 +136,20 @@ class LabelingTaskGenerator:
         self.mask_logscale = mask_logscale
 
         self._load_metadata(protocol, subset=subset)
-
+        #ipdb.set_trace()
         # balanced sampling
         self.subset = subset
         self.protocol = protocol
         self.label_mapping = label_mapping
         self.balanced = balanced
-        all_labels = self.labels_spec['union']['SPEECH'] # gat all "regular" labels
+        self.all_labels =self.labels_spec['regular'] + list(self.labels_spec['union'].keys())
         #self.batch_metrics = batch_metrics
         #self.batch_metrics = None
         self.batch_log = batch_log
-        self.batch_metrics = Batch_Metrics(self.protocol, self.subset, all_labels, self.batch_size, self.batch_log)
+        print('batch log {}'.format(self.batch_log))
+        if self.batch_log:
+            self.batch_metrics = Batch_Metrics(self.protocol, self.subset, 
+                           self.all_labels, self.batch_size, self.batch_log)
 
         
     def postprocess_y(self, Y):
@@ -319,26 +322,28 @@ class LabelingTaskGenerator:
         # things to get from config.yml
         min_freq = True
         #all_labels = self.labels_spec['regular'] # gat all "regular" labels
-        all_labels = self.labels_spec['union']['SPEECH'] # gat all "regular" labels
+        #all_labels = self.labels_spec['union']['SPEECH'] # gat all "regular" labels
+        # all labels are : all in regulars + all keys in union
+        #all_labels = self.labels_spec['regular'] + list(self.labels_spec['union'].keys())
 
         # create domain set
-        domain_set = Domain_set(self.label_mapping, self.protocol,
-                                all_labels, self.subset)
+        domain_set = Domain_set(self.label_mapping, self.data_, self.frame_info,
+                                self.all_labels, self.duration)
 
         # Check that subbatch size is an integer. If not, 
         # Take the closest integer and batch size will be reduced by force.
-        subbatch_size = int(self.batch_size / len(all_labels))
-        if not self.batch_size % len(all_labels) == 0:
+        subbatch_size = int(self.batch_size / len(self.all_labels))
+        if not self.batch_size % len(self.all_labels) == 0:
             print('warning: batch size {} is not a multiple of the '
                   'number of labels {}, required by balanced sampler.'
                   'The batch size will be reduced to {}.'.format(self.batch_size,
-                                                                 len(all_labels),
-                                                                 subbatch_size * len(all_labels)))
+                                                                 len(self.all_labels),
+                                                                 subbatch_size * len(self.all_labels)))
         #self.batch_metrics = Batch_Metrics(self.protocol, self.subset, all_labels, self.batch_size, self.batch_log)
 
         while True:
 
-            for label in all_labels:
+            for label in self.all_labels:
                 _pos_neg = True
                 for k in range(subbatch_size):
                     # Sample alternatively a positive and a negative example
@@ -354,12 +359,14 @@ class LabelingTaskGenerator:
                     datum = self.data_[uri]
                     current_file = datum['current_file']
                     ## TODO fix sample rate in sampling
+                    print('on/off {} {}'.format(sample_onset, sample_offset))
                     subsegment = Segment(sample_onset, sample_offset)
                     X = self.feature_extraction.crop(current_file,
                                              subsegment, mode="center",
                                              fixed=self.duration)
-                    cov = self.batch_metrics.compute_coverage(sample_onset, sample_offset, uri)
-                    bal = self.batch_metrics.compute_balance(label, sample_onset, sample_offset, uri)
+                    if self.batch_log:
+                        cov = self.batch_metrics.compute_coverage(sample_onset, sample_offset, uri)
+                        bal = self.batch_metrics.compute_balance(label, sample_onset, sample_offset, uri)
                     y = self.crop_y(datum['y'], subsegment)
                     sample = {'X': X, 'y': y}
                     for key, classes in self.file_labels_.items():
@@ -383,7 +390,7 @@ class LabelingTaskGenerator:
         uris = list(self.data_)
         durations = np.array([self.data_[uri]['duration'] for uri in uris])
         probabilities = durations / np.sum(durations)
-        all_labels = self.labels_spec['regular'] # gat all "regular" labels
+        #all_labels = self.labels_spec['regular'] # gat all "regular" labels
         i = 0
         while True:
             i+=1
