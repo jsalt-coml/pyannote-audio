@@ -148,8 +148,8 @@ class LabelingTaskGenerator:
         self.batch_log = batch_log
         print('batch log {}'.format(self.batch_log))
         if self.batch_log:
-            self.batch_metrics = Batch_Metrics(self.protocol, self.subset, 
-                           self.all_labels, self.batch_size, self.batch_log)
+            self.batch_metrics = Batch_Metrics(
+                           self.all_labels, self.batch_size, self.batch_log, self.frame_info, self.data_)
 
         
     def postprocess_y(self, Y):

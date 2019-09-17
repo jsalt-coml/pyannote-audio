@@ -16,7 +16,7 @@ from pyannote.database import get_unique_identifier
 
 class Batch_Metrics():
     """log some metrics on the batch generation"""
-    def __init__(self, protocol, subset: str, all_labels: list, batch_size:int, batch_log:str):
+    def __init__(self, all_labels: list, batch_size:int, batch_log:str, frame_info, data_):
 
         self.all_labels = all_labels
         self.batch_log = batch_log
@@ -28,17 +28,21 @@ class Batch_Metrics():
                                                                                ','.join([label + '_bal' for label in self.all_labels])))
 
         ## TODO DEFINE THIS PRETTYLY 
-        self.window = SlidingWindow(duration=0.01, step=0.01, start=0.0)
-
+        # self.window = SlidingWindow(duration=0.01, step=0.01, start=0.0)
+        self.window = frame_info
         self.batch_size = batch_size
 
         # get 1hot per label
-        file_set = list(getattr(protocol, subset)())
-        
-        labels_one_hot = [one_hot_encoding(file['annotation'],
-                                            file['annotated'],
-                                            self.window,
-                                            labels=self.all_labels)[0].data.swapaxes(0,1) for file in file_set]
+        # file_set = list(getattr(protocol, subset)())
+        file_set = [data_[uri] for uri in data_]
+
+        #labels_one_hot = [one_hot_encoding(file['annotation'],
+        #                                    file['annotated'],
+        #                                    self.window,
+        #                                    labels=self.all_labels)[0].data.swapaxes(0,1) for file in file_set]
+
+        labels_one_hot = [file['y'].data.swapaxes(0,1).astype(np.bool) for file in file_set]
+
         self.files_duration = [one_hot.shape[1] for one_hot in labels_one_hot]
         self.allFiles_one_hot = np.concatenate(labels_one_hot, axis=1)
         self.whole_coverage_one_hot = np.zeros((1, self.allFiles_one_hot.shape[1]))
@@ -50,7 +54,7 @@ class Batch_Metrics():
         for i, file in enumerate(file_set):
             indexes_ranges.append(indexes_ranges[i] + self.files_duration[i])
         self.indexes_ranges = np.array(indexes_ranges)
-        self.uris2idx = {file['uri']: self.indexes_ranges[i] for i, file in enumerate(file_set)}
+        self.uris2idx = {file['current_file']['uri']: self.indexes_ranges[i] for i, file in enumerate(file_set)}
         #self.label2idx = {label: i for i, label in self.all_labels}
 
         # init metrics

@@ -183,7 +183,10 @@ class Application:
         # balanced sampling for batches
         self.label_mapping = self.config_['preprocessors']['annotation']['params']['mapping']
         self.balanced = self.config_['task']['params']['balanced']
-        self.batch_log = self.config_['task']['params']['batch_log']
+        try:
+            self.batch_log = self.config_['task']['params']['batch_log']
+        except:
+            self.batch_log = None
         self.batch_size = self.config_['task']['params']['batch_size']
         self.all_labels = self.config_['task']['params']['labels_spec']['regular']
 
