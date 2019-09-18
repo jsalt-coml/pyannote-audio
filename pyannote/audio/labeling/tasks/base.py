@@ -149,7 +149,7 @@ class LabelingTaskGenerator:
         print('batch log {}'.format(self.batch_log))
         if self.batch_log:
             self.batch_metrics = Batch_Metrics(
-                           self.all_labels, self.batch_size, self.batch_log, self.frame_info, self.data_)
+                           self.all_labels, self.batch_size, self.batch_log, self.frame_info, self.data_, self.duration)
 
         
     def postprocess_y(self, Y):
@@ -358,8 +358,9 @@ class LabelingTaskGenerator:
                     #ipdb.set_trace()
                     datum = self.data_[uri]
                     current_file = datum['current_file']
-                    ## TODO fix sample rate in sampling
-                    print('on/off {} {}'.format(sample_onset, sample_offset))
+
+                    ## TODO make sure round numbers for offset
+                    sample_offset = sample_onset + self.duration
                     subsegment = Segment(sample_onset, sample_offset)
                     X = self.feature_extraction.crop(current_file,
                                              subsegment, mode="center",
