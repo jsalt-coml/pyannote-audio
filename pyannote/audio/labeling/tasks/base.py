@@ -362,7 +362,7 @@ class LabelingTaskGenerator:
                     current_file = datum['current_file']
 
                     ## TODO make sure round numbers for offset
-                    samples_onset = sample_middle -self.duration/2
+                    sample_onset = sample_middle -self.duration/2
                     sample_offset = sample_middle + self.duration/2
                     subsegment = Segment(sample_onset, sample_offset)
                     X = self.feature_extraction.crop(current_file,
