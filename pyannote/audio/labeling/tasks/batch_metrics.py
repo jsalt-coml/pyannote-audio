@@ -127,11 +127,12 @@ class Batch_Metrics():
 
         self.batch_one_hot = np.concatenate([self.batch_one_hot, sample_one_hot], axis=1)
 
-        # compute balance
-        nb_samples = self.batch_one_hot.shape[1]
+        # compute balance on batch level
+        print(max(0, self.batch_num) * self.batch_size)
+        nb_samples = self.batch_one_hot[max(0, self.batch_num) * self.batch_size:].shape[1]
         if label:
             for i, label in enumerate(self.all_labels):
-                self.balance[label].append(float(np.sum(self.batch_one_hot[i, :])) / nb_samples)
+                self.balance[label].append(float(np.sum(self.batch_one_hot[i, max(0, self.batch_num) * self.batch_size:])) / nb_samples)
         return self.balance        
 
     def dump_stats(self, output: str, with_balance: bool=True):
