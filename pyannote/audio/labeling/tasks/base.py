@@ -352,7 +352,7 @@ class LabelingTaskGenerator:
                     # first sample domain then example
                     sampled_domain, _ = domain_set.sample_domain(label)
                     #sample_onset, sample_offset, uri = sampled_domain.sample_segment(label, _pos_neg)
-                    sampled_middle, uri = sampled_domain.sample_segment(label, _pos_neg)
+                    sample_middle, uri = sampled_domain.sample_segment(label, _pos_neg)
 
 
                     # log metrics on batch
