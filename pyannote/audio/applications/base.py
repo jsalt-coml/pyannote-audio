@@ -31,6 +31,7 @@ import os
 import sys
 import time
 import yaml
+from typing import Optional
 from pathlib import Path
 from os.path import dirname, basename
 import numpy as np
@@ -75,6 +76,34 @@ class Application:
         app.model_pt_ = model_pt
         epoch = int(basename(app.model_pt_)[:-3])
         app.model_ = app.load_model(epoch, train_dir=train_dir)
+        return app
+
+    @classmethod
+    def from_validate_dir(cls, validate_dir: Path,
+                          db_yml: Optional[Path] = None,
+                          training: Optional[bool] = False):
+
+        # infer train directory from validate directory
+        train_dir = dirname(dirname(validate_dir))
+
+        # load params.yml file from validate directory
+        with open(validate_dir / 'params.yml', 'r') as fp:
+            params_yml = yaml.load(fp)
+
+        # build path to best epoch model
+        epoch = params_yml['epoch']
+        model_pt = cls.WEIGHTS_PT.format(train_dir=train_dir,
+                                         epoch=epoch)
+
+        # instantiate application
+        # TODO. get rid of from_model_pt
+        app = cls.from_model_pt(model_pt, db_yml=db_yml, training=training)
+        app.validate_dir_ = validate_dir
+        app.epoch_ = epoch
+
+        # keep track of pipeline parameters
+        app.pipeline_params_ = params_yml.get('params', {})
+
         return app
 
     def __init__(self, experiment_dir, db_yml=None, training=False):

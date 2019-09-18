@@ -32,7 +32,7 @@ Multi-label classifier
 Usage: 
   pyannote-multilabel train [options] <experiment_dir> <database.task.protocol>
   pyannote-multilabel validate [options] [--every=<epoch> --chronological --precision=<precision> --detection] <label> <train_dir> <database.task.protocol>
-  pyannote-multilabel apply [options] [--step=<step>] <model.pt> <database.task.protocol> <output_dir>
+  pyannote-multilabel apply [options] [--step=<step>] <validate_dir> <database.task.protocol>
   pyannote-multilabel -h | --help
   pyannote-multilabel --version
 
@@ -167,26 +167,16 @@ Configuration file:
     If --detection mode is activated, it will minimizes the detection error rate instead.
 
 
-"apply" mode
-    Use the "apply" mode to extract segmentation raw scores.
-    Resulting files can then be used in the following way: 
-
-    >>> from pyannote.audio.features import Precomputed
-    >>> precomputed = Precomputed('<output_dir>')
-
-    >>> from pyannote.database import get_protocol
-    >>> protocol = get_protocol('<database.task.protocol>')
-    >>> first_test_file = next(protocol.test())
-
-    >>> from pyannote.audio.signal import Binarize
-    >>> binarizer = Binarize()
-
-    >>> raw_scores = precomputed(first_test_file)
-    >>> label_regions = binarizer.apply(raw_scores, dimension=1)
+"apply" mode:
+    Use the "apply" mode to extract speech activity detection raw scores and
+    results. This will create the following directory that contains speech
+    activity detection results:
+        <validate_dir>/apply/<epoch>
 """
 
 import multiprocessing as mp
 from functools import partial
+from typing import Optional
 from pathlib import Path
 
 import numpy as np
@@ -353,17 +343,38 @@ class Multilabel(BaseLabeling):
                                                       'pad_onset': 0.,
                                                       'pad_offset': 0.})}
 
-    def apply(self, protocol_name, output_dir, step=None, subset=None): 
+    def apply(self, protocol_name: str,
+              step: Optional[float] = None,
+              subset: Optional[str] = "test"):
 
         model = self.model_.to(self.device)
         model.eval()
 
+        labels = model.specifications['y']['classes']
+        predicted_class = self.validate_dir_.parent.name.split('_')[-1]
+        index_predicted = labels.index(predicted_class)
+
+        if predicted_class in self.task_.labels_spec["regular"]:
+            derivation_type = "regular"
+        elif predicted_class in self.task_.labels_spec["union"]:
+            derivation_type = "union"
+        elif predicted_class in self.task_.labels_spec["intersection"]:
+            derivation_type = "intersection"
+        else:
+            raise ValueError("%s not found in training labels : %s"
+                             % (self.label, self.task_.label_names))
+
+
         duration = self.task_.duration
-        if step is None: 
+        if step is None:
             step = 0.25 * duration
 
+        output_dir = Path(self.APPLY_DIR.format(
+            validate_dir=self.validate_dir_,
+            epoch=self.epoch_))
+
         # do not use memmap as this would lead to too many open files
-        if isinstance(self.feature_extraction_, Precomputed): 
+        if isinstance(self.feature_extraction_, Precomputed):
             self.feature_extraction_.use_memmap = False
 
         # initialize embedding extraction
@@ -373,31 +384,71 @@ class Multilabel(BaseLabeling):
             device=self.device)
 
         sliding_window = sequence_labeling.sliding_window
-        n_classes = self.task_.n_classes
-        labels = self.task_.labels_
 
         # create metadata file at root that contains
         # sliding window and dimension information
         precomputed = Precomputed(
             root_dir=output_dir,
             sliding_window=sliding_window,
-            dimension=n_classes,
-            labels=labels)
+            labels=model.classes)
 
         # file generator
         protocol = get_protocol(protocol_name, progress=True,
                                 preprocessors=self.preprocessors_)
 
-        if subset is None: 
-            files = FileFinder.protocol_file_iter(protocol,
-                                                  extra_keys=['audio'])
-        else: 
-            files = getattr(protocol, subset)()
-
-        for current_file in files: 
+        for current_file in getattr(protocol, subset)():
             fX = sequence_labeling(current_file)
             precomputed.dump(current_file, fX)
 
+        # do not proceed with the full pipeline
+        # when there is no such thing for current task
+        if not hasattr(self, 'pipeline_params_'):
+            return
+
+        # instantiate pipeline
+        pipeline = SpeechActivityDetectionPipeline(scores=output_dir, dimension=index_predicted)
+        pipeline.instantiate(self.pipeline_params_)
+
+        # load pipeline metric (when available)
+        try:
+            metric = pipeline.get_metric()
+        except NotImplementedError as e:
+            metric = None
+
+        # apply pipeline and dump output to RTTM files
+        output_rttm = output_dir / f'{protocol_name}.{subset}.rttm'
+        with open(output_rttm, 'w') as fp:
+            for current_file in getattr(protocol, subset)():
+                hypothesis = pipeline(current_file)
+                pipeline.write_rttm(fp, hypothesis)
+
+                # compute evaluation metric (when possible)
+                if 'annotation' not in current_file:
+                    metric = None
+
+                # compute evaluation metric (when available)
+                if metric is None:
+                    continue
+
+                if derivation_type == "regular":
+                    current_file["annotation"] = current_file["annotation"].subset([predicted_class])
+                else:
+                    current_file["annotation"] = MultilabelTask.derives_label(current_file["annotation"],
+                                                                              derivation_type=derivation_type,
+                                                                              meta_label=predicted_class,
+                                                                              regular_labels=
+                                                                              self.task_.labels_spec[derivation_type][predicted_class])
+                reference = current_file['annotation']
+                uem = get_annotated(current_file)
+                _ = metric(reference, hypothesis, uem=uem)
+
+        # print pipeline metric (when available)
+        if metric is None:
+            return
+
+        output_eval = output_dir / f'{protocol_name}.{subset}.eval'
+        with open(output_eval, 'w') as fp:
+            fp.write(str(metric))
 
 def main():
     arguments = docopt(__doc__, version='Multilabel')
@@ -482,18 +533,13 @@ def main():
                              start=start, end=end, every=every,
                              in_order=in_order, task=label)
 
-    if arguments['apply']: 
+    if arguments['apply']:
+
+        validate_dir = Path(arguments['<validate_dir>'])
+        validate_dir = validate_dir.expanduser().resolve(strict=True)
 
         if subset is None: 
             subset = 'test'
-
-        model_pt = Path(arguments['<model.pt>'])
-        model_pt = model_pt.expanduser().resolve(strict=True)
-
-        output_dir = Path(arguments['<output_dir>'])
-        output_dir = output_dir.expanduser().resolve(strict=False)
-
-        # TODO. create README file in <output_dir>
 
         step = arguments['--step']
         if step is not None: 
@@ -501,9 +547,9 @@ def main():
 
         batch_size = int(arguments['--batch'])
 
-        application = Multilabel.from_model_pt(
-            protocol_name, model_pt, db_yml=db_yml, training=False)
+        application = Multilabel.from_validate_dir(
+            validate_dir, db_yml=db_yml, training=False)
         application.device = device
         application.batch_size = batch_size
-        application.apply(protocol_name, output_dir, step=step, subset=subset)
+        application.apply(protocol_name, step=step, subset=subset)
 

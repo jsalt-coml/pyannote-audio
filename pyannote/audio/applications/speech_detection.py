@@ -137,21 +137,10 @@ Configuration file:
     threshold that minimizes the detection error rate.
 
 "apply" mode:
-    Use the "apply" mode to extract speech activity detection raw scores.
-    Resulting files can then be used in the following way:
-
-    >>> from pyannote.audio.features import Precomputed
-    >>> precomputed = Precomputed('<output_dir>')
-
-    >>> from pyannote.database import get_protocol
-    >>> protocol = get_protocol('<database.task.protocol>')
-    >>> first_test_file = next(protocol.test())
-
-    >>> from pyannote.audio.signal import Binarize
-    >>> binarizer = Binarize()
-
-    >>> raw_scores = precomputed(first_test_file)
-    >>> speech_regions = binarizer.apply(raw_scores, dimension=1)
+    Use the "apply" mode to extract speech activity detection raw scores and
+    results. This will create the following directory that contains speech
+    activity detection results:
+        <validate_dir>/apply/<epoch>
 """
 
 from functools import partial
@@ -309,13 +298,11 @@ def main():
 
     if arguments['apply']:
 
-        model_pt = Path(arguments['<model.pt>'])
-        model_pt = model_pt.expanduser().resolve(strict=True)
+        validate_dir = Path(arguments['<validate_dir>'])
+        validate_dir = validate_dir.expanduser().resolve(strict=True)
 
-        output_dir = Path(arguments['<output_dir>'])
-        output_dir = output_dir.expanduser().resolve(strict=False)
-
-        # TODO. create README file in <output_dir>
+        if subset is None:
+            subset = 'test'
 
         step = arguments['--step']
         if step is not None:
@@ -323,8 +310,8 @@ def main():
 
         batch_size = int(arguments['--batch'])
 
-        application = SpeechActivityDetection.from_model_pt(
-            model_pt, db_yml=db_yml, training=False)
+        application = SpeechActivityDetection.from_validate_dir(
+            validate_dir, db_yml=db_yml, training=False)
         application.device = device
         application.batch_size = batch_size
-        application.apply(protocol_name, output_dir, step=step, subset=subset)
+        application.apply(protocol_name, step=step, subset=subset)
