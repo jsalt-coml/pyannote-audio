@@ -351,7 +351,9 @@ class LabelingTaskGenerator:
 
                     # first sample domain then example
                     sampled_domain, _ = domain_set.sample_domain(label)
-                    sample_onset, sample_offset, uri = sampled_domain.sample_segment(label, _pos_neg)
+                    #sample_onset, sample_offset, uri = sampled_domain.sample_segment(label, _pos_neg)
+                    sampled_middle, uri = sampled_domain.sample_segment(label, _pos_neg)
+
 
                     # log metrics on batch
 
@@ -360,7 +362,8 @@ class LabelingTaskGenerator:
                     current_file = datum['current_file']
 
                     ## TODO make sure round numbers for offset
-                    sample_offset = sample_onset + self.duration
+                    samples_onset = sample_middle -self.duration/2
+                    sample_offset = sample_middle + self.duration/2
                     subsegment = Segment(sample_onset, sample_offset)
                     X = self.feature_extraction.crop(current_file,
                                              subsegment, mode="center",
