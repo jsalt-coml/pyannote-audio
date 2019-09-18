@@ -46,6 +46,9 @@ class Batch_Metrics():
         self.files_duration = [one_hot.shape[1] for one_hot in labels_one_hot]
         self.allFiles_one_hot = np.concatenate(labels_one_hot, axis=1)
         self.whole_coverage_one_hot = np.zeros((1, self.allFiles_one_hot.shape[1]))
+        self.corpus_length = self.allFiles_one_hot.shape[1]
+        self.label_frequencies = np.sum(self.allFiles_one_hot, axis = 1)
+
         self.label_coverage_one_hot = np.zeros((len(self.all_labels), self.allFiles_one_hot.shape[1]))
 
 
@@ -106,7 +109,7 @@ class Batch_Metrics():
 
         ## TODO DO THAT FOR EACH LABEL
         self.whole_coverage_one_hot[0,rel_onset:rel_offset] += 1
-        cov = np.sum(np.minimum(self.whole_coverage_one_hot, np.ones(self.whole_coverage_one_hot.shape))) / self.whole_coverage_one_hot.shape[1]
+        cov = np.sum(np.minimum(self.whole_coverage_one_hot, np.ones(self.whole_coverage_one_hot.shape))) / self.corpus_length
         self.whole_coverage = np.concatenate([self.whole_coverage, np.array([[cov]])], axis=1)
         # increment the batch number at each batch
         if self.whole_coverage.shape[1] % self.batch_size == 0:
@@ -119,7 +122,8 @@ class Batch_Metrics():
         # get one hot of segment
         sample_one_hot = self.allFiles_one_hot[:, rel_onset: rel_offset]
         self.label_coverage_one_hot[:, rel_onset: rel_offset] = sample_one_hot ## TODO ADD TO GET DENSITY ? MEH NOT NOW ... 
-        self.label_coverage = np.sum(self.label_coverage_one_hot, axis=1) / np.sum(self.allFiles_one_hot, axis = 1)
+        # log along batch, not along all
+        self.label_coverage = np.sum(self.label_coverage_one_hot, axis=1) #/ self.label_frequencies
 
         self.batch_one_hot = np.concatenate([self.batch_one_hot, sample_one_hot], axis=1)
 
