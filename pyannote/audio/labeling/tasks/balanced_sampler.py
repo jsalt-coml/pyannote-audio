@@ -39,7 +39,7 @@ class AnnotatedFile:
         self.negative_one_hot = np.invert(self.positive_one_hot)
         # setting the borders of the one hot encoding (corresponding to the borders of the sound file)
         # to False to prevent sampling between two file when they are concatenated
-        samples_nb = self.window.samples(int(self.sample_duration / 2)) + 1
+        samples_nb = self.window.durationToSamples(int(self.sample_duration / 2)) + 1
         self.positive_one_hot[:, :samples_nb] = False
         self.positive_one_hot[:, -samples_nb:] = False
         self.negative_one_hot[:, :samples_nb] = False
@@ -96,7 +96,8 @@ class Domain:
         frame_file_idx = frame_index - self.indexes_ranges[file_idx]
         onset, offset = self.annotated_files[file_idx].get_frames_around_idx(frame_file_idx)
         file_uri = self.annotated_files[file_idx].uri
-        return self.window.samplesToDuration(onset), self.window.samplesToDuration(offset), file_uri
+        #return self.window.samplesToDuration(onset), self.window.samplesToDuration(offset), file_uri
+        return self.window.samplesToDuration(frame_file_idx), file_uri
 
     def _sample_positive(self, label: str):
         """ return sampled index in concatenated 1hot"""
