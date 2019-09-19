@@ -32,7 +32,7 @@ Speech activity detection
 Usage:
   pyannote-speech-detection train [options] <experiment_dir> <database.task.protocol>
   pyannote-speech-detection validate [options] [--every=<epoch> --chronological] <train_dir> <database.task.protocol>
-  pyannote-speech-detection apply [options] [--step=<step>] <model.pt> <database.task.protocol> <output_dir>
+  pyannote-speech-detection apply [options] [--step=<step>] <validate_dir> <database.task.protocol>
   pyannote-speech-detection -h | --help
   pyannote-speech-detection --version
 
@@ -66,7 +66,8 @@ Common options:
                              models (i.e. the output of "train" mode).
 
 "apply" mode:
-  <model.pt>                 Path to the pretrained model.
+  <validate_dir>             Path to the directory containing validation
+                             results (i.e. the output of "validate" mode).
   --step=<step>              Sliding window step, in seconds.
                              Defaults to 25% of window duration.
 

@@ -69,8 +69,9 @@ Common options:
   --detection                  Indicates if the Detection Error Rate should be used for validating the mode.
                              Default mode uses precision/recall.
 
-"apply" mode: 
-  <model.pt>                 Path to the pretrained model.
+"apply" mode:
+  <validate_dir>             Path to the directory containing validation
+                             results (i.e. the output of "validate" mode).
   --step=<step>              Sliding window step, in seconds.
                              Defaults to 25% of window duration.
 
@@ -165,7 +166,6 @@ Configuration file:
     In practice, for each epoch, "validate" mode will look for the optimal
     decision threshold that maximizes recall, depending on a given accuracy.
     If --detection mode is activated, it will minimizes the detection error rate instead.
-
 
 "apply" mode:
     Use the "apply" mode to extract speech activity detection raw scores and
