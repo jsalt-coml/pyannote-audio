@@ -40,6 +40,7 @@ class AnnotatedFile:
         # setting the borders of the one hot encoding (corresponding to the borders of the sound file)
         # to False to prevent sampling between two file when they are concatenated
         samples_nb = self.window.durationToSamples(int(self.sample_duration / 2)) + 1
+        ## TODO PUT  A BIGGER MARGIN ????
         self.positive_one_hot[:, :samples_nb] = False
         self.positive_one_hot[:, -samples_nb:] = False
         self.negative_one_hot[:, :samples_nb] = False

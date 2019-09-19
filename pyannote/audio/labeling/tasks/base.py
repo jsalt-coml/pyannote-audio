@@ -146,6 +146,7 @@ class LabelingTaskGenerator:
         #self.batch_metrics = batch_metrics
         #self.batch_metrics = None
         self.batch_log = batch_log
+        #ipdb.set_trace()
         print('batch log {}'.format(self.batch_log))
         if self.batch_log:
             self.batch_metrics = Batch_Metrics(
@@ -317,14 +318,28 @@ class LabelingTaskGenerator:
         samples : generator
             Generator that yields {'X': ..., 'y': ...} samples indefinitely.
         """
+        def get_sample(sampled_domain, label, _pos_neg):
+            sample_middle, uri = sampled_domain.sample_segment(label, _pos_neg)
+            datum = self.data_[uri]
+            current_file = datum['current_file']
+
+            sample_onset = sample_middle -self.duration/2
+            sample_offset = sample_middle + self.duration/2
+            subsegment = Segment(sample_onset, sample_offset)
+            X = self.feature_extraction.crop(current_file,
+                                                 subsegment, mode="center",
+                                                 fixed=self.duration)
+            # Size mismatch can arise due to difference in features step 
+            # and in frame_info step.
+            # fix it that way ? TODO CHECK ?
+            if X.shape[0] != (self.duration / self.feature_extraction.sliding_window.step):
+                datum, subsegment, sample_onset, sample_offset, uri, X = get_sample(sampled_domain, label, _pos_neg)
+            return datum, subsegment, sample_onset, sample_offset, uri, X
+
 
         uris = list(self.data_)
         # things to get from config.yml
         min_freq = True
-        #all_labels = self.labels_spec['regular'] # gat all "regular" labels
-        #all_labels = self.labels_spec['union']['SPEECH'] # gat all "regular" labels
-        # all labels are : all in regulars + all keys in union
-        #all_labels = self.labels_spec['regular'] + list(self.labels_spec['union'].keys())
 
         # create domain set
         domain_set = Domain_set(self.label_mapping, self.data_, self.frame_info,
@@ -339,7 +354,6 @@ class LabelingTaskGenerator:
                   'The batch size will be reduced to {}.'.format(self.batch_size,
                                                                  len(self.all_labels),
                                                                  subbatch_size * len(self.all_labels)))
-        #self.batch_metrics = Batch_Metrics(self.protocol, self.subset, all_labels, self.batch_size, self.batch_log)
 
         while True:
 
@@ -351,30 +365,16 @@ class LabelingTaskGenerator:
 
                     # first sample domain then example
                     sampled_domain, _ = domain_set.sample_domain(label)
-                    #sample_onset, sample_offset, uri = sampled_domain.sample_segment(label, _pos_neg)
-                    sample_middle, uri = sampled_domain.sample_segment(label, _pos_neg)
 
+                    datum, subsegment, sample_onset, sample_offset, uri, X = get_sample(sampled_domain, label, _pos_neg)
 
-                    # log metrics on batch
-
-                    #ipdb.set_trace()
-                    datum = self.data_[uri]
-                    current_file = datum['current_file']
-
-                    ## TODO make sure round numbers for offset
-                    sample_onset = sample_middle -self.duration/2
-                    sample_offset = sample_middle + self.duration/2
-                    subsegment = Segment(sample_onset, sample_offset)
-                    X = self.feature_extraction.crop(current_file,
-                                             subsegment, mode="center",
-                                             fixed=self.duration)
                     if self.batch_log:
+                        bal = self.batch_metrics.compute_balance(sample_onset, sample_offset, uri)
                         cov = self.batch_metrics.compute_coverage(sample_onset, sample_offset, uri)
-                        bal = self.batch_metrics.compute_balance(label, sample_onset, sample_offset, uri)
                     y = self.crop_y(datum['y'], subsegment)
                     sample = {'X': X, 'y': y}
                     for key, classes in self.file_labels_.items():
-                        sample[key] = classes.index(current_file[key])
+                        sample[key] = classes.index(datum['current_file'][key])
                     #print('using balanced_sampler')
 
                     yield sample
@@ -394,7 +394,6 @@ class LabelingTaskGenerator:
         uris = list(self.data_)
         durations = np.array([self.data_[uri]['duration'] for uri in uris])
         probabilities = durations / np.sum(durations)
-        #all_labels = self.labels_spec['regular'] # gat all "regular" labels
         i = 0
         while True:
             i+=1
@@ -440,18 +439,19 @@ class LabelingTaskGenerator:
 
             for key, classes in self.file_labels_.items():
                 sample[key] = classes.index(current_file[key])
-            #print('using random_sampler')
-            sample_onset = int(subsegment.start) 
-            sample_offset = int((subsegment.start + self.duration)) 
 
-            cov = self.batch_metrics.compute_coverage(sample_onset, sample_offset, uri)
-            bal = self.batch_metrics.compute_balance(None, sample_onset, sample_offset, uri)
+            # log coverage and balance
+            if self.batch_log:
+                sample_onset = int(subsegment.start) 
+                sample_offset = int((subsegment.start + self.duration)) 
+                bal = self.batch_metrics.compute_balance(sample_onset, sample_offset, uri)
+                cov = self.batch_metrics.compute_coverage(sample_onset, sample_offset, uri)
+                if (i%self.batch_size == 0):
+                    self.batch_metrics.dump_stats(self.batch_log, with_balance=False)
+
 
             yield sample
-            #batch_log = '/scratch2/jkaradayi/projects/JSALT2019/BabyTrain_multilabel/2708_pyannote_for_samplingBranch/random_sampling/batch.log'
-            #
-            if (self.batch_log and i%self.batch_size == 0):
-                self.batch_metrics.dump_stats(self.batch_log, with_balance=False)
+
 
 
     def _sliding_samples(self):
