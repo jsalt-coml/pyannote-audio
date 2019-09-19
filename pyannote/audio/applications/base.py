@@ -116,9 +116,9 @@ class Application:
         training : boolean, optional
             When False, data augmentation is disabled.
         """
+        super(Application, self).__init__()
+
         self.experiment_dir = experiment_dir
-        self.device = None
-        self.task_ = None
 
         # load configuration
         config_yml = self.CONFIG_YML.format(experiment_dir=self.experiment_dir)
@@ -150,7 +150,7 @@ class Application:
                 # preprocessors:
                 #    key: /path/to/{uri}.wav
                 preprocessors[key] = preprocessor
-                        
+
         self.preprocessors_ = preprocessors
 
         # scheduler
@@ -190,14 +190,6 @@ class Application:
                 **self.config_['data_augmentation'].get('params', {}))
         else:
             augmentation = None
-
-        # callbacks
-        self.callbacks_ = []
-        if 'callbacks' in self.config_:
-            for callback_config in self.config_['callbacks']:
-                Callback = get_class_by_name(callback_config['name'])
-                callback = Callback(**callback_config.get('params', {}))
-                self.callbacks_.append(callback)
 
         # feature extraction
         if 'feature_extraction' in self.config_:

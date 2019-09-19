@@ -168,6 +168,8 @@ def validate_helper_func(current_file, pipeline=None, metric=None):
 
 class SpeechActivityDetection(BaseLabeling):
 
+    Pipeline = SpeechActivityDetectionPipeline
+
     def validate_epoch(self, epoch, protocol_name, subset='development',
                        validation_data=None):
 
