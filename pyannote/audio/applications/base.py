@@ -54,6 +54,7 @@ class Application:
     WEIGHTS_DIR = '{train_dir}/weights'
     WEIGHTS_PT = '{train_dir}/weights/{epoch:04d}.pt'
     VALIDATE_DIR = '{train_dir}/validate{_task}/{protocol}.{subset}'
+    APPLY_DIR = '{validate_dir}/apply/{epoch:04d}'
 
     @classmethod
     def from_train_dir(cls, train_dir, db_yml=None, training=False):

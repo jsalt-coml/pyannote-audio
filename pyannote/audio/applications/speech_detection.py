@@ -144,6 +144,7 @@ Configuration file:
         <validate_dir>/apply/<epoch>
 """
 
+from typing import Optional
 from functools import partial
 from pathlib import Path
 import torch
@@ -152,8 +153,9 @@ import scipy.optimize
 from docopt import docopt
 import multiprocessing as mp
 from .base_labeling import BaseLabeling
-from pyannote.database import get_annotated
+from pyannote.database import get_annotated, get_protocol
 from pyannote.metrics.detection import DetectionErrorRate
+from pyannote.audio.features import Precomputed
 from pyannote.audio.labeling.extraction import SequenceLabeling
 from pyannote.audio.pipeline import SpeechActivityDetection \
                              as SpeechActivityDetectionPipeline
@@ -219,6 +221,89 @@ class SpeechActivityDetection(BaseLabeling):
                                                   'pad_onset': 0.,
                                                   'pad_offset': 0.})}
 
+    def apply(self, protocol_name: str,
+              step: Optional[float] = None,
+              subset: Optional[str] = "test"):
+
+        model = self.model_.to(self.device)
+        model.eval()
+
+        duration = self.task_.duration
+        if step is None:
+            step = 0.25 * duration
+
+        output_dir = Path(self.APPLY_DIR.format(
+            validate_dir=self.validate_dir_,
+            epoch=self.epoch_))
+
+        # do not use memmap as this would lead to too many open files
+        if isinstance(self.feature_extraction_, Precomputed):
+            self.feature_extraction_.use_memmap = False
+
+        # initialize embedding extraction
+        sequence_labeling = SequenceLabeling(
+            model=model, feature_extraction=self.feature_extraction_,
+            duration=duration, step=step, batch_size=self.batch_size,
+            device=self.device)
+
+        sliding_window = sequence_labeling.sliding_window
+
+        # create metadata file at root that contains
+        # sliding window and dimension information
+        precomputed = Precomputed(
+            root_dir=output_dir,
+            sliding_window=sliding_window,
+            labels=model.classes)
+
+        # file generator
+        protocol = get_protocol(protocol_name, progress=True,
+                                preprocessors=self.preprocessors_)
+
+        for current_file in getattr(protocol, subset)():
+            fX = sequence_labeling(current_file)
+            precomputed.dump(current_file, fX)
+
+        # do not proceed with the full pipeline
+        # when there is no such thing for current task
+        if not hasattr(self, 'pipeline_params_'):
+            return
+
+        # instantiate pipeline
+        pipeline = self.Pipeline(scores=output_dir, dimension=1)
+        pipeline.instantiate(self.pipeline_params_)
+
+        # load pipeline metric (when available)
+        try:
+            metric = pipeline.get_metric()
+        except NotImplementedError as e:
+            metric = None
+
+        # apply pipeline and dump output to RTTM files
+        output_rttm = output_dir / f'{protocol_name}.{subset}.rttm'
+        with open(output_rttm, 'w') as fp:
+            for current_file in getattr(protocol, subset)():
+                hypothesis = pipeline(current_file)
+                pipeline.write_rttm(fp, hypothesis)
+
+                # compute evaluation metric (when possible)
+                if 'annotation' not in current_file:
+                    metric = None
+
+                # compute evaluation metric (when available)
+                if metric is None:
+                    continue
+
+                reference = current_file['annotation']
+                uem = get_annotated(current_file)
+                _ = metric(reference, hypothesis, uem=uem)
+
+        # print pipeline metric (when available)
+        if metric is None:
+            return
+
+        output_eval = output_dir / f'{protocol_name}.{subset}.eval'
+        with open(output_eval, 'w') as fp:
+            fp.write(str(metric))
 
 def main():
     arguments = docopt(__doc__, version='Speech activity detection')
