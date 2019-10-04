@@ -333,8 +333,8 @@ class LabelingTaskGenerator:
             # and in frame_info step.
             # fix it that way ? TODO CHECK ?
             if X.shape[0] != (self.duration / self.feature_extraction.sliding_window.step):
-                datum, subsegment, sample_onset, sample_offset, uri, X = get_sample(sampled_domain, label, _pos_neg)
-            return datum, subsegment, sample_onset, sample_offset, uri, X
+                sample_middle, datum, subsegment, sample_onset, sample_offset, uri, X = get_sample(sampled_domain, label, _pos_neg)
+            return sample_middle, datum, subsegment, sample_onset, sample_offset, uri, X
 
 
         uris = list(self.data_)
@@ -358,19 +358,24 @@ class LabelingTaskGenerator:
         while True:
 
             for label in self.all_labels:
-                _pos_neg = True
+                #_pos_neg = True
                 for k in range(subbatch_size):
+                    #ipdb.set_trace()
                     # Sample alternatively a positive and a negative example
-                    _pos_neg = not _pos_neg
-
+                    #_pos_neg = not _pos_neg
+                    _pos_neg = bool(k%2) # change _pos_neg depending on parity...
+                    #print('sampling {} for {}'.format(_pos_neg, label))
                     # first sample domain then example
                     sampled_domain, _ = domain_set.sample_domain(label)
 
-                    datum, subsegment, sample_onset, sample_offset, uri, X = get_sample(sampled_domain, label, _pos_neg)
+                    sample_middle, datum, subsegment, sample_onset, sample_offset, uri, X = get_sample(sampled_domain, label, _pos_neg)
 
                     if self.batch_log:
                         bal = self.batch_metrics.compute_balance(sample_onset, sample_offset, uri)
                         cov = self.batch_metrics.compute_coverage(sample_onset, sample_offset, uri)
+                    _y = datum['y']
+                    element = _y.data[_y.sliding_window.durationToSamples(sample_onset):_y.sliding_window.durationToSamples(sample_offset), :]
+                    self.batch_metrics.compute_subbatch_balance(element, _pos_neg, label)
                     y = self.crop_y(datum['y'], subsegment)
                     sample = {'X': X, 'y': y}
                     for key, classes in self.file_labels_.items():
@@ -378,7 +383,7 @@ class LabelingTaskGenerator:
                     #print('using balanced_sampler')
 
                     yield sample
-
+                self.batch_metrics.dump_subbatch(label)
             if self.batch_log:
                 self.batch_metrics.dump_stats(self.batch_log)
 
@@ -447,7 +452,7 @@ class LabelingTaskGenerator:
                 bal = self.batch_metrics.compute_balance(sample_onset, sample_offset, uri)
                 cov = self.batch_metrics.compute_coverage(sample_onset, sample_offset, uri)
                 if (i%self.batch_size == 0):
-                    self.batch_metrics.dump_stats(self.batch_log, with_balance=False)
+                    self.batch_metrics.dump_stats(self.batch_log, with_balance=True)
 
 
             yield sample

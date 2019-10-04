@@ -70,7 +70,7 @@ class Domain:
         self.window = frame_info
         self.all_labels = all_labels
         self.annotated_files = annotated_files
-
+        
         # get labels 1 hot
         positive_one_hot = np.concatenate([file.positive_one_hot for file in self.annotated_files], axis=1)
         negative_one_hot = np.concatenate([file.negative_one_hot for file in self.annotated_files], axis=1)
@@ -82,6 +82,7 @@ class Domain:
             indexes_ranges.append(indexes_ranges[i] + file.total_frames_nb)
         self.indexes_ranges = np.array(indexes_ranges)
 
+        #ipdb.set_trace()
         self.total_size = positive_one_hot.shape[0]
         self.positive_freqs = positive_one_hot.sum(1)
         self.negative_freqs = negative_one_hot.sum(1)
@@ -93,6 +94,7 @@ class Domain:
     def _get_file(self, frame_index: int):
         """ from index in concatenated 1hot, get corresponding input file
             and segment position in that file"""
+        #ipdb.set_trace()
         file_idx = bisect.bisect_left(self.indexes_ranges, frame_index) - 1
         frame_file_idx = frame_index - self.indexes_ranges[file_idx]
         onset, offset = self.annotated_files[file_idx].get_frames_around_idx(frame_file_idx)
