@@ -78,12 +78,14 @@ class SpeechActivityDetection(Pipeline):
 
     def __init__(self, scores: Optional[Path] = None,
                  scores_name: Optional[Path] = 'sad_scores',
-                 detection: Optional[Path] = True):
+                 detection: Optional[Path] = True,
+                 dimension=0):
         super().__init__()
 
         self.scores = scores
         self.scores_name = scores_name
         self.detection = detection
+        self.dimension = dimension
 
         if self.scores is not None:
             self._precomputed = Precomputed(self.scores)
@@ -138,12 +140,12 @@ class SpeechActivityDetection(Pipeline):
         data = np.exp(sad_scores.data) if self.log_scale_ \
                else sad_scores.data
 
-        # speech vs. non-speech
+        # if more than 1 column
         if data.shape[1] > 1:
-            speech_prob = SlidingWindowFeature(1. - data[:, 0], sad_scores.sliding_window)
+            # then we use self.dimension parameter
+            speech_prob = SlidingWindowFeature(data[:, self.dimension], sad_scores.sliding_window)
         else:
             speech_prob = SlidingWindowFeature(data, sad_scores.sliding_window)
-
         speech = self._binarize.apply(speech_prob)
 
         speech.uri = current_file['uri']

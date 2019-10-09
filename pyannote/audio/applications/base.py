@@ -3,7 +3,7 @@
 
 # The MIT License (MIT)
 
-# Copyright (c) 2017-2019 CNRS
+# Copyright (c) 2017 CNRS
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -31,6 +31,7 @@ import os
 import sys
 import time
 import yaml
+from typing import Optional
 from pathlib import Path
 from os.path import dirname, basename
 import numpy as np
@@ -48,12 +49,14 @@ from pyannote.core.utils.helper import get_class_by_name
 import warnings
 
 
-class Application:
+class Application(object):
+
     CONFIG_YML = '{experiment_dir}/config.yml'
     TRAIN_DIR = '{experiment_dir}/train/{protocol}.{subset}'
     WEIGHTS_DIR = '{train_dir}/weights'
     WEIGHTS_PT = '{train_dir}/weights/{epoch:04d}.pt'
     VALIDATE_DIR = '{train_dir}/validate{_task}/{protocol}.{subset}'
+    APPLY_DIR = '{validate_dir}/apply/{epoch:04d}'
 
     @classmethod
     def from_train_dir(cls, train_dir, db_yml=None, training=False):
@@ -63,24 +66,45 @@ class Application:
         return app
 
     @classmethod
-    def from_validate_txt(cls, validate_txt, db_yml=None, training=False):
-        train_dir = dirname(dirname(dirname(validate_txt)))
-        app = cls.from_train_dir(train_dir, db_yml=db_yml, training=training)
-        app.validate_txt_ = validate_txt
-        return app
-
-    @classmethod
     def from_model_pt(cls, model_pt, db_yml=None, training=False):
         train_dir = dirname(dirname(model_pt))
         app = cls.from_train_dir(train_dir, db_yml=db_yml, training=training)
         app.model_pt_ = model_pt
         epoch = int(basename(app.model_pt_)[:-3])
         app.model_ = app.load_model(epoch, train_dir=train_dir)
+        app.epoch_ = epoch
+        return app
+
+    @classmethod
+    def from_validate_dir(cls, validate_dir: Path,
+                               db_yml: Optional[Path] = None,
+                               training: Optional[bool] = False):
+
+        # infer train directory from validate directory
+        train_dir = dirname(dirname(validate_dir))
+
+        # load params.yml file from validate directory
+        with open(validate_dir / 'params.yml', 'r') as fp:
+            params_yml = yaml.load(fp)
+
+        # build path to best epoch model
+        epoch = params_yml['epoch']
+        model_pt = cls.WEIGHTS_PT.format(train_dir=train_dir,
+                                         epoch=epoch)
+
+        # instantiate application
+        # TODO. get rid of from_model_pt
+        app = cls.from_model_pt(model_pt, db_yml=db_yml, training=training)
+        app.validate_dir_ = validate_dir
+        app.epoch_ = epoch
+
+        # keep track of pipeline parameters
+        app.pipeline_params_ = params_yml.get('params', {})
+
         return app
 
     def __init__(self, experiment_dir, db_yml=None, training=False):
         """
-
         Parameters
         ----------
         experiment_dir : str
@@ -88,9 +112,9 @@ class Application:
         training : boolean, optional
             When False, data augmentation is disabled.
         """
+        super(Application, self).__init__()
+
         self.experiment_dir = experiment_dir
-        self.device = None
-        self.task_ = None
 
         # load configuration
         config_yml = self.CONFIG_YML.format(experiment_dir=self.experiment_dir)
@@ -122,7 +146,7 @@ class Application:
                 # preprocessors:
                 #    key: /path/to/{uri}.wav
                 preprocessors[key] = preprocessor
-                        
+
         self.preprocessors_ = preprocessors
 
         # scheduler
@@ -154,7 +178,7 @@ class Application:
             warnings.warn(e.args[0])
 
         # data augmentation (only when training the model)
-        if training and 'data_augmentation' in self.config_:
+        if training and 'data_augmentation' in self.config_ :
             DataAugmentation = get_class_by_name(
                 self.config_['data_augmentation']['name'],
                 default_module_name='pyannote.audio.augmentation')
@@ -162,14 +186,6 @@ class Application:
                 **self.config_['data_augmentation'].get('params', {}))
         else:
             augmentation = None
-
-        # callbacks
-        self.callbacks_ = []
-        if 'callbacks' in self.config_:
-            for callback_config in self.config_['callbacks']:
-                Callback = get_class_by_name(callback_config['name'])
-                callback = Callback(**callback_config.get('params', {}))
-                self.callbacks_.append(callback)
 
         # feature extraction
         if 'feature_extraction' in self.config_:
@@ -192,13 +208,12 @@ class Application:
 
     def train(self, protocol_name, subset='train', restart=0, epochs=1000):
         """Trainer model
-
         Parameters
         ----------
-        protocol_name : `str`
+        protocol_name : `str`
         subset : {'train', 'development', 'test'}, optional
             Defaults to 'train'.
-        restart : `int`, optional
+        restart : `int`, optional
             Restart training at `restart`th epoch. Defaults to training from
             scratch.
         epochs : `int`, optional
@@ -245,18 +260,14 @@ class Application:
 
         self.task_.fit(
             self.get_model_, batch_generator,
-            restart=restart,
-            epochs=epochs,
+            restart=restart, epochs=epochs,
             get_optimizer=self.get_optimizer_,
             get_scheduler=self.get_scheduler_,
             learning_rate=self.learning_rate_,
-            callbacks=self.callbacks_,
-            log_dir=train_dir,
-            device=self.device)
+            log_dir=train_dir, device=self.device)
 
     def load_model(self, epoch, train_dir=None):
         """Load pretrained model
-
         Parameters
         ----------
         epoch : int
@@ -286,7 +297,6 @@ class Application:
 
     def get_number_of_epochs(self, train_dir=None, return_first=False):
         """Get information about completed epochs
-
         Parameters
         ----------
         train_dir : str, optional
@@ -294,7 +304,6 @@ class Application:
         return_first : bool, optional
             Defaults (False) to return number of epochs.
             Set to True to also return index of first epoch.
-
         """
 
         if train_dir is None:
@@ -331,6 +340,7 @@ class Application:
 
         params_yml = validate_dir / 'params.yml'
         validate_dir.mkdir(parents=True, exist_ok=False)
+
         writer = tensorboardX.SummaryWriter(logdir=str(validate_dir))
 
         validation_data = self.validate_init(protocol_name, subset=subset,
@@ -400,10 +410,8 @@ class Application:
                       in_order=False):
         """Continuously watches `train_dir` for newly completed epochs
         and yields them for validation
-
         Note that epochs will not necessarily be yielded in order.
         The very last completed epoch will always be first on the list.
-
         Parameters
         ----------
         start : int, optional
@@ -415,13 +423,10 @@ class Application:
         sleep : int, optional
         in_order : bool, optional
             Force chronological validation.
-
         Usage
         -----
         >>> for epoch in app.validate_iter():
         ...     app.validate(epoch)
-
-
         """
 
         if end is None:
