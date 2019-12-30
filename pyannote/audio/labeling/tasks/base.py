@@ -548,7 +548,6 @@ class LabelingTask(Trainer):
         self.task_type_ = self.model_.specifications['task']
 
         if self.task_type_ == TASK_MULTI_CLASS_CLASSIFICATION:
-
             self.n_classes_ = len(self.model_.specifications['y']['classes'])
 
             def loss_func(input, target, weight=None, mask=None):

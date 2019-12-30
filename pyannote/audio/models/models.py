@@ -46,7 +46,8 @@ class RNN(nn.Module):
     n_features : `int`
         Input feature shape.
     unit : {'LSTM', 'GRU'}, optional
-    hidden_size : `int`, optional
+        Defaults to 'LSTM'.
+    hidden_size : `int`, optional
         Number of features in the hidden state h. Defaults to 16.
     num_layers : `int`, optional
         Number of recurrent layers. Defaults to 1.
@@ -61,7 +62,7 @@ class RNN(nn.Module):
     concatenate : `boolean`, optional
         Concatenate output of each layer instead of using only the last one
         (which is the default behavior).
-    pool : {'sum', 'max', 'last'}, optional
+    pool : {'sum', 'max', 'last', 'x-vector'}, optional
         Temporal pooling strategy. Defaults to no pooling.
     """
 
@@ -69,7 +70,6 @@ class RNN(nn.Module):
                  bias=True, dropout=0, bidirectional=False, concatenate=False,
                  pool=None):
         super().__init__()
-
         self.n_features = n_features
 
         self.unit = unit
@@ -181,9 +181,17 @@ class RNN(nn.Module):
 
         elif self.pool == 'last':
             if self.bidirectional:
-                raise NotImplementedError()
-                # return ...
-            output = output[:, -1]
+                output = torch.cat(
+                    hidden.view(self.num_layers, num_directions,
+                                -1, self.hidden_size)[-1],
+                    dim=0)
+            else:
+                output = output[:, -1]
+
+        elif self.pool == 'x-vector':
+            output = torch.cat((torch.mean(output, dim=1),
+                                torch.std(output, dim=1)),
+                               dim=1)
 
         if return_intermediate:
             return output, intermediate
@@ -198,6 +206,8 @@ class RNN(nn.Module):
                 dimension *= 2
             if self.concatenate:
                 dimension *= self.num_layers
+            if self.pool == 'x-vector':
+                dimension *= 2
             return dimension
         return locals()
     dimension = property(**dimension())
@@ -256,7 +266,9 @@ class FF(nn.Module):
     def dimension():
         doc = "Output dimension."
         def fget(self):
-            return self.hidden_size[-1]
+            if self.hidden_size:
+                return self.hidden_size[-1]
+            return self.n_features
         return locals()
     dimension = property(**dimension())
 
@@ -408,10 +420,15 @@ class PyanNet(nn.Module):
         if return_intermediate is None:
             output = self.rnn_(output)
         else:
-            # get RNN final AND intermediate outputs
-            output, intermediate = self.rnn_(output, return_intermediate=True)
-            # only keep hidden state of requested layer
-            intermediate = intermediate[return_intermediate]
+            if return_intermediate == 0:
+                intermediate = output
+                output = self.rnn_(output)
+            else:
+                return_intermediate -= 1
+                # get RNN final AND intermediate outputs
+                output, intermediate = self.rnn_(output, return_intermediate=True)
+                # only keep hidden state of requested layer
+                intermediate = intermediate[return_intermediate]
 
         output = self.ff_(output)
 
@@ -436,7 +453,9 @@ class PyanNet(nn.Module):
         raise NotImplementedError(msg)
 
     def intermediate_dimension(self, layer):
-        return self.rnn_.intermediate_dimension(layer)
+        if layer == 0:
+            return self.sincnet_.dimension
+        return self.rnn_.intermediate_dimension(layer - 1)
 
     @property
     def classes(self):

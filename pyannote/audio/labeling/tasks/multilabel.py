@@ -30,7 +30,10 @@ from itertools import cycle
 
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
+from pyannote.audio.models.models import RNN
+
 
 from pyannote.core import Annotation
 from pyannote.core import SlidingWindowFeature
@@ -42,6 +45,7 @@ from pyannote.database import get_protocol
 from .base import LabelingTask
 from .base import LabelingTaskGenerator
 from .. import TASK_MULTI_LABEL_CLASSIFICATION
+from ..gradient_reversal import GradientReversal
 
 
 class MultilabelGenerator(LabelingTaskGenerator):
@@ -117,7 +121,6 @@ class MultilabelGenerator(LabelingTaskGenerator):
                  subset='train', frame_info=None, frame_crop=None,
                  duration=3.2, batch_size=32, per_epoch=1, parallel=1,
                  shuffle=True):
-
         self.labels_spec = labels_spec
         super().__init__(feature_extraction, protocol, subset=subset,
                          frame_info=frame_info, frame_crop=frame_crop,
@@ -150,14 +153,17 @@ class MultilabelGenerator(LabelingTaskGenerator):
 
     @property
     def specifications(self):
-        return {
+        specs = {
             'task': TASK_MULTI_LABEL_CLASSIFICATION,
             'X': {'dimension': self.feature_extraction.dimension},
             'y': {'classes': self.labels_spec["regular"]
                              + list(self.labels_spec['union'])
                              + list(self.labels_spec['intersection'])},
         }
+        for key, classes in self.file_labels_.items():
+            specs[key] = {'classes': classes}
 
+        return specs
 
 class Multilabel(LabelingTask):
     """
@@ -274,6 +280,7 @@ class Multilabel(LabelingTask):
 
         self.weight_ = None
         self.weighted_loss = weighted_loss
+        self.n_classes_ = self.nb_regular_labels + len(self.union_labels) + len(self.intersection_labels)
 
     @staticmethod
     def derives_label(annotation, derivation_type, meta_label, regular_labels):
@@ -381,6 +388,7 @@ class Multilabel(LabelingTask):
         self.task_type_ = self.model_.specifications['task']
 
         def loss_func(input, target, weight=None, mask=None):
+            print(mask)
             if mask is None:
                 return F.binary_cross_entropy(input, target, weight=weight,
                                               reduction='mean')
@@ -392,3 +400,244 @@ class Multilabel(LabelingTask):
 
         self.loss_func_ = loss_func
 
+
+class DomainAwareMultilabel(Multilabel):
+    """Domain-aware multilabel classification
+
+    Trains multilabel and domain classification jointly.
+
+    Parameters
+    ----------
+    domain : `str`, optional
+        Batch key to use as domain. Defaults to 'domain'.
+        Could be 'database' or 'uri' for instance.
+    attachment : `int`, optional
+        Intermediate level where to attach the domain classifier.
+        Defaults to -1. Passed to `return_intermediate` in models supporting it.
+    rnn : `dict`, optional
+        Parameters of the RNN used in the domain classifier.
+        See `pyannote.audio.models.models.RNN` for details.
+    domain_loss : `str`, optional
+        Loss function to use. Defaults to 'NLLLoss'.
+    """
+
+    DOMAIN_PT = '{log_dir}/weights/{epoch:04d}.domain.pt'
+
+    def __init__(self,
+                 domain='domain', attachment=-1,
+                 rnn=None, domain_loss="NLLLoss",
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.domain = domain
+        self.attachment = attachment
+
+        if rnn is None:
+            rnn = dict()
+        self.rnn = rnn
+
+        self.domain_loss = domain_loss
+        if self.domain_loss == "NLLLoss":
+            # Default value
+            self.domain_loss_ = nn.NLLLoss()
+            self.activation_ = nn.LogSoftmax(dim=1)
+
+        elif self.domain_loss == "MSELoss":
+            self.domain_loss_ = nn.MSELoss()
+            self.activation_ = nn.Sigmoid()
+
+        else:
+            msg = (
+                f'{domain_loss} has not been implemented yet.'
+            )
+            raise NotImplementedError(msg)
+
+    def parameters(self, model, specifications, device):
+        """Initialize trainable trainer parameters
+
+        Parameters
+        ----------
+        specifications : `dict`
+            Batch specs.
+
+        Returns
+        -------
+        parameters : iterable
+            Trainable trainer parameters
+        """
+        domain_classifier_rnn = RNN(
+            n_features=model.intermediate_dimension(self.attachment),
+            **self.rnn)
+        print(domain_classifier_rnn)
+        domain_classifier_linear = nn.Linear(
+            domain_classifier_rnn.dimension,
+            len(specifications[self.domain]['classes']),
+            bias=True).to(device)
+
+        self.domain_classifier_ = nn.Sequential(domain_classifier_rnn,
+                                                domain_classifier_linear).to(device)
+        return list(self.domain_classifier_.parameters())
+
+    def load_epoch(self, epoch):
+        """Load model and classifier from disk
+
+        Parameters
+        ----------
+        epoch : `int`
+            Epoch number.
+        """
+
+        super().load_epoch(epoch)
+
+        domain_classifier_state = torch.load(
+            self.DOMAIN_PT.format(log_dir=self.log_dir_, epoch=epoch),
+            map_location=lambda storage, loc: storage)
+        self.domain_classifier_.load_state_dict(domain_classifier_state)
+
+    def save_epoch(self, epoch=None):
+        """Save model to disk
+
+        Parameters
+        ----------
+        epoch : `int`, optional
+            Epoch number. Defaults to self.epoch_
+
+        """
+
+        if epoch is None:
+            epoch = self.epoch_
+
+        torch.save(self.domain_classifier_.state_dict(),
+                   self.DOMAIN_PT.format(log_dir=self.log_dir_,
+                                         epoch=epoch))
+
+        super().save_epoch(epoch=epoch)
+
+    def batch_loss(self, batch):
+        """Compute loss for current `batch`
+
+        Parameters
+        ----------
+        batch : `dict`
+            ['X'] (`numpy.ndarray`)
+            ['y'] (`numpy.ndarray`)
+
+        Returns
+        -------
+        batch_loss : `dict`
+            ['loss'] (`torch.Tensor`) : Loss
+        """
+
+        # forward pass
+        X = torch.tensor(batch['X'],
+                         dtype=torch.float32,
+                         device=self.device_)
+        fX, intermediate = self.model_(X, return_intermediate=self.attachment)
+
+        # speech activity detection
+        fX = fX.view((-1, self.n_classes_))
+        target = torch.tensor(
+            batch['y'],
+            dtype=torch.int64,
+            device=self.device_).contiguous().view((-1,))
+
+        weight = self.weight
+        if weight is not None:
+            weight = weight.to(device=self.device_)
+        loss = self.loss_func_(fX, target, weight=weight)
+
+        # domain classification
+        domain_target = torch.tensor(
+            batch[self.domain],
+            dtype=torch.int64,
+            device=self.device_)
+
+        domain_scores = self.activation_(self.domain_classifier_(intermediate))
+
+        domain_loss = self.domain_loss_(domain_scores, domain_target)
+
+        return {'loss': loss + domain_loss,
+                'loss_domain': domain_loss,
+                'loss_task': loss}
+
+
+class DomainAdversarialMultilabel(DomainAwareMultilabel):
+    """Domain Adversarial speech activity detection
+
+    Parameters
+    ----------
+    domain : `str`, optional
+        Batch key to use as domain. Defaults to 'domain'.
+        Could be 'database' or 'uri' for instance.
+    attachment : `int`, optional
+        Intermediate level where to attach the domain classifier.
+        Defaults to -1. Passed to `return_intermediate` in models supporting it.
+    alpha : `float`, optional
+        Coefficient multiplied with the domain loss
+    """
+
+    def __init__(self, domain='domain', attachment=-1, alpha=1., **kwargs):
+        super().__init__(domain=domain, attachment=attachment, **kwargs)
+        self.alpha = alpha
+        self.gradient_reversal_ = GradientReversal()
+
+    def batch_loss(self, batch):
+        """Compute loss for current `batch`
+
+        Parameters
+        ----------
+        batch : `dict`
+            ['X'] (`numpy.ndarray`)
+            ['y'] (`numpy.ndarray`)
+
+        Returns
+        -------
+        batch_loss : `dict`
+            ['loss'] (`torch.Tensor`) : Loss
+        """
+        # forward pass
+        X = torch.tensor(batch['X'],
+                         dtype=torch.float32,
+                         device=self.device_)
+
+        fX, intermediate = self.model_(X, return_intermediate=self.attachment)
+
+        # multilabel classification
+        target = torch.tensor(
+            batch['y'],
+            dtype=torch.float32,
+            device=self.device_)
+
+        weight = self.weight
+        if weight is not None:
+            weight = weight.to(device=self.device_)
+
+        loss = self.loss_func_(fX, target, weight=weight)
+
+        # domain classification
+        domain_target = torch.tensor(
+            batch[self.domain],
+            dtype=torch.int64,
+            device=self.device_)
+        print("domain target shape")
+        print(np.shape(domain_target))
+        print("intermediate shape")
+        print(np.shape(intermediate))
+        print("reversed shape")
+        print(np.shape(self.gradient_reversal_(intermediate)))
+        print("after process by domain  classifier")
+        print(np.shape(self.domain_classifier_(
+            self.gradient_reversal_(intermediate))))
+        domain_scores = self.activation_(self.domain_classifier_(
+            self.gradient_reversal_(intermediate)))
+
+        if self.domain_loss == "MSELoss":
+            # One hot encode domain_target for Mean Squared Error Loss
+            nb_domains = domain_scores.shape[1]
+            identity_mat = torch.sparse.torch.eye(nb_domains, device=self.device_)
+            domain_target = identity_mat.index_select(dim=0, index=domain_target)
+
+        domain_loss = self.domain_loss_(domain_scores, domain_target)
+
+        return {'loss': loss + self.alpha * domain_loss,
+                'loss_domain': domain_loss,
+                'loss_task': loss}

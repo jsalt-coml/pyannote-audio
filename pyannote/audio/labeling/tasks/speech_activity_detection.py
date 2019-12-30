@@ -34,6 +34,7 @@ import torch.nn as nn
 from .base import LabelingTask
 from .base import LabelingTaskGenerator
 from .base import TASK_MULTI_CLASS_CLASSIFICATION
+from pyannote.audio.models.models import RNN
 from ..gradient_reversal import GradientReversal
 
 
@@ -162,13 +163,31 @@ class DomainAwareSpeechActivityDetection(SpeechActivityDetection):
 
     DOMAIN_PT = '{log_dir}/weights/{epoch:04d}.domain.pt'
 
-    def __init__(self, domain='domain', attachment=-1, **kwargs):
+    def __init__(self, domain='domain', attachment=-1,
+                 rnn=None, domain_loss="NLLLoss",
+                 **kwargs):
         super().__init__(**kwargs)
         self.domain = domain
         self.attachment = attachment
+        if rnn is None:
+            rnn = dict()
+        self.rnn = rnn
 
-        self.logsoftmax_ = nn.LogSoftmax(dim=1)
-        self.domain_loss_ = nn.NLLLoss()
+        self.domain_loss = domain_loss
+        if self.domain_loss == "NLLLoss":
+            # Default value
+            self.domain_loss_ = nn.NLLLoss()
+            self.activation_ = nn.LogSoftmax(dim=1)
+
+        elif self.domain_loss == "MSELoss":
+            self.domain_loss_ = nn.MSELoss()
+            self.activation_ = nn.Sigmoid()
+
+        else:
+            msg = (
+                f'{domain_loss} has not been implemented yet.'
+            )
+            raise NotImplementedError(msg)
 
     def parameters(self, model, specifications, device):
         """Initialize trainable trainer parameters
@@ -183,11 +202,17 @@ class DomainAwareSpeechActivityDetection(SpeechActivityDetection):
         parameters : iterable
             Trainable trainer parameters
         """
+        domain_classifier_rnn = RNN(
+            n_features=model.intermediate_dimension(self.attachment),
+            **self.rnn)
 
-        self.domain_classifier_ = nn.Linear(
-            model.intermediate_dimension(self.attachment),
+        domain_classifier_linear = nn.Linear(
+            domain_classifier_rnn.dimension,
             len(specifications[self.domain]['classes']),
             bias=True).to(device)
+
+        self.domain_classifier_ = nn.Sequential(domain_classifier_rnn,
+                                                domain_classifier_linear).to(device)
 
         return list(self.domain_classifier_.parameters())
 
@@ -265,7 +290,7 @@ class DomainAwareSpeechActivityDetection(SpeechActivityDetection):
             dtype=torch.int64,
             device=self.device_)
 
-        domain_scores = self.logsoftmax_(self.domain_classifier_(intermediate))
+        domain_scores = self.activation_(self.domain_classifier_(intermediate))
         domain_loss = self.domain_loss_(domain_scores, domain_target)
 
         return {'loss': loss + domain_loss,
@@ -320,8 +345,15 @@ class DomainAdversarialSpeechActivityDetection(DomainAwareSpeechActivityDetectio
             dtype=torch.int64,
             device=self.device_)
 
-        domain_scores = self.logsoftmax_(self.domain_classifier_(
+        domain_scores = self.activation_(self.domain_classifier_(
             self.gradient_reversal_(intermediate)))
+
+        if self.domain_loss == "MSELoss":
+            # One hot encode domain_target for Mean Squared Error Loss
+            nb_domains = domain_scores.shape[1]
+            identity_mat = torch.sparse.torch.eye(nb_domains, device=self.device_)
+            domain_target = identity_mat.index_select(dim=0, index=domain_target)
+
         domain_loss = self.domain_loss_(domain_scores, domain_target)
 
         return {'loss': loss + self.alpha * domain_loss,
