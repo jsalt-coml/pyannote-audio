@@ -11,7 +11,7 @@ Neural building blocks for speaker diarization:
 
 ```bash
 # Step 1: This creates a conda environment with python3.6
-$ conda create env -f environment.yml
+$ conda env create -f environment.yml
 $ source activate pyannote
 
 # Step 2:  install from source in the "develop" branch
