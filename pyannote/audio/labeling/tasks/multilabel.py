@@ -388,7 +388,6 @@ class Multilabel(LabelingTask):
         self.task_type_ = self.model_.specifications['task']
 
         def loss_func(input, target, weight=None, mask=None):
-            print(mask)
             if mask is None:
                 return F.binary_cross_entropy(input, target, weight=weight,
                                               reduction='mean')
@@ -467,7 +466,6 @@ class DomainAwareMultilabel(Multilabel):
         domain_classifier_rnn = RNN(
             n_features=model.intermediate_dimension(self.attachment),
             **self.rnn)
-        print(domain_classifier_rnn)
         domain_classifier_linear = nn.Linear(
             domain_classifier_rnn.dimension,
             len(specifications[self.domain]['classes']),
