@@ -618,15 +618,7 @@ class DomainAdversarialMultilabel(DomainAwareMultilabel):
             batch[self.domain],
             dtype=torch.int64,
             device=self.device_)
-        print("domain target shape")
-        print(np.shape(domain_target))
-        print("intermediate shape")
-        print(np.shape(intermediate))
-        print("reversed shape")
-        print(np.shape(self.gradient_reversal_(intermediate)))
-        print("after process by domain  classifier")
-        print(np.shape(self.domain_classifier_(
-            self.gradient_reversal_(intermediate))))
+
         domain_scores = self.activation_(self.domain_classifier_(
             self.gradient_reversal_(intermediate)))
 
