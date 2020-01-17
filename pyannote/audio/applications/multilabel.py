@@ -32,7 +32,7 @@ Multi-label classifier
 Usage: 
   pyannote-multilabel train [options] <experiment_dir> <database.task.protocol>
   pyannote-multilabel validate [options] [--every=<epoch> --chronological --precision=<precision> --detection] <label> <train_dir> <database.task.protocol>
-  pyannote-multilabel apply [options] [--step=<step>] <validate_dir> <database.task.protocol>
+  pyannote-multilabel apply [options] [--detection] [--step=<step>] <validate_dir> <database.task.protocol>
   pyannote-multilabel -h | --help
   pyannote-multilabel --version
 
@@ -50,6 +50,8 @@ Common options:
                              effect in "apply" mode. [default:  0]
   --to=<epochs>              End {train|validat}ing at epoch <epoch>.
                              Defaults to keep going forever.
+  --detection                Indicates if the Detection Error Rate should be used for validating the mode.
+                             Default mode uses precision/recall.
 "train" mode: 
   <experiment_dir>           Set experiment root directory. This script expects
                              a configuration file called "config.yml" to live
@@ -66,16 +68,13 @@ Common options:
   <train_dir>                Path to the directory containing pre-trained
                              models (i.e. the output of "train" mode).
   --precision=<precision>    Target detection precision [default:  0.8].
-  --detection                  Indicates if the Detection Error Rate should be used for validating the mode.
-                             Default mode uses precision/recall.
 
 "apply" mode:
   <validate_dir>             Path to the directory containing validation
                              results (i.e. the output of "validate" mode).
   --step=<step>              Sliding window step, in seconds.
                              Defaults to 25% of window duration.
-
-Database configuration file <database.yml>: 
+Database configuration file <database.yml>:
     The database configuration provides details as to where actual files are
     stored. See `pyannote.database.util.FileFinder` docstring for more
     information on the expected format.
@@ -407,13 +406,14 @@ class Multilabel(BaseLabeling):
 
         # instantiate pipeline
         pipeline = SpeechActivityDetectionPipeline(scores=output_dir, dimension=index_predicted)
+        pipeline.detection = self.detection
         pipeline.instantiate(self.pipeline_params_)
 
         # load pipeline metric (when available)
         try:
-            metric = pipeline.get_metric()
+            metrics = [pipeline.get_metric()]
         except NotImplementedError as e:
-            metric = None
+            metrics = [DetectionPrecision(), DetectionRecall()]
 
         # apply pipeline and dump output to RTTM files
         output_rttm = output_dir / f'{protocol_name}.{subset}.rttm'
@@ -424,10 +424,10 @@ class Multilabel(BaseLabeling):
 
                 # compute evaluation metric (when possible)
                 if 'annotation' not in current_file:
-                    metric = None
+                    metrics = None
 
                 # compute evaluation metric (when available)
-                if metric is None:
+                if metrics is None:
                     continue
 
                 if derivation_type == "regular":
@@ -440,15 +440,14 @@ class Multilabel(BaseLabeling):
                                                                               self.task_.labels_spec[derivation_type][predicted_class])
                 reference = current_file['annotation']
                 uem = get_annotated(current_file)
-                _ = metric(reference, hypothesis, uem=uem)
+                for metric in metrics:
+                    _ = metric(reference, hypothesis, uem=uem)
 
-        # print pipeline metric (when available)
-        if metric is None:
-            return
-
-        output_eval = output_dir / f'{protocol_name}.{subset}.eval'
-        with open(output_eval, 'w') as fp:
-            fp.write(str(metric))
+        for metric in metrics:
+            name = metric.metric_name().replace(' ', '_')
+            output_eval = output_dir / f'{protocol_name}.{subset}.{name}.eval'
+            with open(output_eval, 'w') as fp:
+                fp.write(str(metric))
 
 def main():
     arguments = docopt(__doc__, version='Multilabel')
@@ -534,7 +533,6 @@ def main():
                              in_order=in_order, task=label)
 
     if arguments['apply']:
-
         validate_dir = Path(arguments['<validate_dir>'])
         validate_dir = validate_dir.expanduser().resolve(strict=True)
 
@@ -551,5 +549,6 @@ def main():
             validate_dir, db_yml=db_yml, training=False)
         application.device = device
         application.batch_size = batch_size
+        application.detection = detection
         application.apply(protocol_name, step=step, subset=subset)
 
