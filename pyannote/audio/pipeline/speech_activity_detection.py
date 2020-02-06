@@ -42,6 +42,7 @@ from pyannote.audio.features import Precomputed
 from pyannote.metrics.detection import DetectionPrecision
 from pyannote.metrics.detection import DetectionRecall
 from pyannote.metrics.detection import DetectionErrorRate
+from pyannote.metrics.detection import DetectionPrecisionRecallFMeasure
 
 from pyannote.database import get_annotated
 
@@ -79,12 +80,16 @@ class SpeechActivityDetection(Pipeline):
     def __init__(self, scores: Optional[Path] = None,
                  scores_name: Optional[Path] = 'sad_scores',
                  detection: Optional[Path] = True,
+                 fscore: Optional[Path] = False,
                  dimension=0):
         super().__init__()
 
         self.scores = scores
         self.scores_name = scores_name
         self.detection = detection
+        if fscore:
+            self.detection = False
+        self.fscore = fscore
         self.dimension = dimension
 
         if self.scores is not None:
@@ -156,8 +161,11 @@ class SpeechActivityDetection(Pipeline):
         If mode set on detection.
         Otherwise, it will use the self.loss function for precision and recall
         """
+
         if self.detection:
             return DetectionErrorRate(collar=0.0, skip_overlap=False)
+        elif self.fscore:
+            return DetectionPrecisionRecallFMeasure(collar=0.0, skip_overlap=False)
         else:
             raise NotImplementedError()
 

@@ -14,7 +14,7 @@ dependencies:
     - pyannote.core == 3.2
     - pyannote.database == 2.3.1
     - pyannote.generators == 2.0.0
-    - pyannote.metrics == 2.0.2
+    - pyannote.metrics >= 2.0.2
     - pyannote.pipeline == 1.2
     - python_speech_features == 0.6
     - pyYAML >= 3.12

@@ -50,7 +50,9 @@ Common options:
                              effect in "apply" mode. [default:  0]
   --to=<epochs>              End {train|validat}ing at epoch <epoch>.
                              Defaults to keep going forever.
-  --detection                Indicates if the Detection Error Rate should be used for validating the mode.
+  --detection                Indicates if the Detection Error Rate should be used for validating mode.
+                             Default mode uses precision/recall.
+  --fscore                   Indicates if the precision/recall F measure should be used for both validating and application mode.
                              Default mode uses precision/recall.
 "train" mode: 
   <experiment_dir>           Set experiment root directory. This script expects
@@ -189,7 +191,7 @@ from pyannote.audio.pipeline import SpeechActivityDetection \
     as SpeechActivityDetectionPipeline
 from pyannote.core import SlidingWindowFeature
 from pyannote.database import get_annotated, get_protocol, FileFinder
-from pyannote.metrics.detection import DetectionErrorRate, DetectionRecall, DetectionPrecision
+from pyannote.metrics.detection import DetectionErrorRate, DetectionRecall, DetectionPrecision, DetectionPrecisionRecallFMeasure
 
 from .base_labeling import BaseLabeling
 
@@ -269,7 +271,7 @@ class Multilabel(BaseLabeling):
         best_alpha = .5 * (lower_alpha + upper_alpha)
         best_recall = 0.
 
-        if not self.detection:
+        if not self.detection and not self.fscore:
             for _ in range(10):
 
                 current_alpha = .5 * (lower_alpha + upper_alpha)
@@ -311,7 +313,7 @@ class Multilabel(BaseLabeling):
                                                        'min_duration_off':  0.,
                                                        'pad_onset':  0.,
                                                        'pad_offset':  0.})}
-        else:
+        elif self.detection:
             def fun(threshold):
                 pipeline.instantiate({'onset': threshold,
                                       'offset': threshold,
@@ -335,6 +337,36 @@ class Multilabel(BaseLabeling):
             return {'metric': 'detection_error_rate',
                     'minimize': True,
                     'value': res.fun,
+                    'pipeline': pipeline.instantiate({'onset': threshold,
+                                                      'offset': threshold,
+                                                      'min_duration_on': 0.,
+                                                      'min_duration_off': 0.,
+                                                      'pad_onset': 0.,
+                                                      'pad_offset': 0.})}
+        elif self.fscore:
+
+            def fun(threshold):
+                pipeline.instantiate({'onset': threshold,
+                                      'offset': threshold,
+                                      'min_duration_on': 0.,
+                                      'min_duration_off': 0.,
+                                      'pad_onset': 0.,
+                                      'pad_offset': 0.})
+                metric = DetectionPrecisionRecallFMeasure(parallel=True)
+                validate = partial(validate_helper_func,
+                                   pipeline=pipeline,
+                                   metric=metric)
+                _ = self.pool_.map(validate, validation_data)
+                return -abs(metric)
+
+            res = scipy.optimize.minimize_scalar(
+                fun, bounds=(0., 1.), method='bounded', options={'maxiter': 10})
+
+            threshold = res.x.item()
+
+            return {'metric': 'fscore',
+                    'minimize': False,
+                    'value': -res.fun,
                     'pipeline': pipeline.instantiate({'onset': threshold,
                                                       'offset': threshold,
                                                       'min_duration_on': 0.,
@@ -407,6 +439,7 @@ class Multilabel(BaseLabeling):
         # instantiate pipeline
         pipeline = SpeechActivityDetectionPipeline(scores=output_dir, dimension=index_predicted)
         pipeline.detection = self.detection
+        pipeline.fscore = self.fscore
         pipeline.instantiate(self.pipeline_params_)
 
         # load pipeline metric (when available)
@@ -457,6 +490,7 @@ def main():
     gpu = arguments['--gpu']
     device = torch.device('cuda') if gpu else torch.device('cpu')
     detection = arguments['--detection']
+    fscore = arguments['--fscore']
 
     # HACK for JHU/CLSP cluster
     _ = torch.Tensor([0]).to(device)
@@ -527,6 +561,7 @@ def main():
         application.n_jobs = n_jobs
         application.precision = precision
         application.detection = detection
+        application.fscore = fscore
 
         application.validate(protocol_name, subset=subset,
                              start=start, end=end, every=every,
@@ -550,5 +585,6 @@ def main():
         application.device = device
         application.batch_size = batch_size
         application.detection = detection
+        application.fscore = fscore
         application.apply(protocol_name, step=step, subset=subset)
 
